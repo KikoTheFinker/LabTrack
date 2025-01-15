@@ -1,21 +1,23 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Depends
 from jose import jwt, JWTError, ExpiredSignatureError
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.core.database import get_db
 from app.core.exceptions import raise_jwt_invalid_or_expired, raise_user_not_found
 from app.models.user import User
+from app.schemas.user_schema import UserResponse
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def create_access_token(data: dict) -> str:
+def create_access_token(data: dict, role: str) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "role": role})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -32,19 +34,21 @@ def verify_access_token(token: str) -> dict:
         raise_jwt_invalid_or_expired()
 
 
-def get_current_user(token: str, db: Session) -> User:
+def get_current_user(token: str, db: Session = Depends(get_db)) -> UserResponse:
     try:
         payload = verify_access_token(token)
-        email = payload.get("sub")
-        if not email:
+        username = payload.get("sub")
+        if not username:
             raise_jwt_invalid_or_expired()
 
-        user = db.query(User).filter(User.email == email).first()
+        user = db.query(User).filter(User.username == username).first()
         if not user:
             raise_user_not_found()
 
-        return user
-
+        return UserResponse(
+            id=user.id,
+            username=user.username,
+        )
     except JWTError:
         raise_jwt_invalid_or_expired()
 
