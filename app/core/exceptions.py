@@ -20,3 +20,10 @@ def raise_invalid_credentials():
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid username or password.",
     )
+
+
+def raise_course_not_found():
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="User with that id does not exist"
+    )
