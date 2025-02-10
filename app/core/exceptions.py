@@ -27,3 +27,10 @@ def raise_course_not_found():
         status_code=status.HTTP_404_NOT_FOUND,
         detail="User with that id does not exist"
     )
+
+
+def raise_user_not_permitted():
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="User is not permitted to access this resource"
+    )

@@ -34,7 +34,7 @@ def verify_access_token(token: str) -> dict:
         raise_jwt_invalid_or_expired()
 
 
-def get_current_user(token: str, db: Session = Depends(get_db)) -> UserResponse:
+def get_current_user(token: str, db: Session = Depends(get_db)):
     try:
         payload = verify_access_token(token)
         username = payload.get("sub")
@@ -45,10 +45,8 @@ def get_current_user(token: str, db: Session = Depends(get_db)) -> UserResponse:
         if not user:
             raise_user_not_found()
 
-        return UserResponse(
-            id=user.id,
-            username=user.username,
-        )
+        return user
+
     except JWTError:
         raise_jwt_invalid_or_expired()
 
