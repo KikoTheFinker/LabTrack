@@ -19,13 +19,13 @@ from app.schemas.login_request import LoginRequest
 app = FastAPI()
 
 
-@app.get("/users")
-def get_all_users(db: Session = Depends(get_db), curr_user=Depends(get_current_user)):
+@app.get("/students")
+def get_all_students(db: Session = Depends(get_db), curr_user=Depends(get_current_user)):
     if curr_user.role not in ["PROFESSOR", "ASSISTANT"]:
         raise_user_not_permitted()
 
     try:
-        users = db.query(User).all()
+        users = db.query(User).filter(User.role != "PROFESSOR", User.role != "ASSISTANT").all()
         return [
             {"id": user.id, "username": user.username, "name": user.name, "surname": user.surname, "role": user.role}
             for user in users]
