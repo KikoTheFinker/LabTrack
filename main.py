@@ -1,22 +1,32 @@
-import qrcode
-import io
 import base64
+import io
+
+import qrcode
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.exceptions import raise_invalid_credentials, raise_user_not_found, raise_course_not_found, \
     raise_user_not_permitted
-from app.core.jwt.security import verify_password, create_access_token, get_current_user
+from app.core.jwt.security import verify_password, create_access_token, get_current_user, hash_password
 from app.models import Course, LaboratoryExercise, StudentPoints
+from app.models.course_assignments import CourseAssignments
 from app.models.user import User
 from app.schemas.change_password_schema import ChangePasswordRequest
 from app.schemas.course_schema import CourseResponse
-from app.schemas.user_schema import UserResponse
-from app.models.course_assignments import CourseAssignments
 from app.schemas.login_request import LoginRequest
+from app.schemas.user_schema import UserResponse
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/students")
@@ -125,12 +135,13 @@ def enroll_course(course_id: int, user_id: int, db: Session = Depends(get_db), c
     db.refresh(enrollment)
     return {"message": "User enrolled successfully"}
 
+
 # @app.get("/courses/{course_id}/exercises}")
 # def get_course_exercises(course_id: int, db : Session = Depends()):
 
 
 @app.get("/course/{user_id}")
-def get_user_courses(user_id: int, db: Session = Depends(), curr_user=Depends(get_current_user)):
+def get_user_courses(user_id: int, db: Session = Depends(get_db), curr_user=Depends(get_current_user)):
     if curr_user.role not in ["PROFESSOR", "ASSISTANT"] and curr_user.id != user_id:
         raise_user_not_permitted()
 
@@ -162,18 +173,20 @@ def get_student_courses_exercises(student_id: int, db: Session = Depends(get_db)
             LaboratoryExercise.id.label("exercise_id"),
             LaboratoryExercise.name.label("exercise_name"),
             LaboratoryExercise.date_time.label("exercise_date"),
+            LaboratoryExercise.max_points.label("exercise_max_points"),
             StudentPoints.points.label("points"),
+
         )
         .join(LaboratoryExercise, LaboratoryExercise.course_id == Course.id)
         .join(StudentPoints, StudentPoints.lab_exercise_id == LaboratoryExercise.id,
-              isouter=True)  # Left join to keep exercises without points
+              isouter=True)
         .filter(StudentPoints.student_id == student_id)
     )
 
     results = query.all()
 
     response = {}
-    for course_id, course_name, exercise_id, exercise_name, exercise_date, points in results:
+    for course_id, course_name, exercise_id, exercise_name, exercise_date, exercise_max_points, points in results:
         if course_id not in response:
             response[course_id] = {
                 "course_id": course_id,
@@ -184,7 +197,8 @@ def get_student_courses_exercises(student_id: int, db: Session = Depends(get_db)
         response[course_id]["exercises"].append({
             "exercise_id": exercise_id,
             "exercise_name": exercise_name,
-            "points": points if points is not None else 0,
+            "points": points if points is not None else "Not Graded",
+            "max_points": exercise_max_points,
             "date": exercise_date
         })
 
@@ -212,7 +226,8 @@ def generate_qr(lab_exercise_id: int, student_id: int, db: Session = Depends(get
 
 
 @app.get("/grade/{lab_exercise_id}/{student_id}")
-def get_grade_data(lab_exercise_id: int, student_id: int, db: Session = Depends(get_db), curr_user=Depends(get_current_user)):
+def get_grade_data(lab_exercise_id: int, student_id: int, db: Session = Depends(get_db),
+                   curr_user=Depends(get_current_user)):
     if curr_user.role not in ["PROFESSOR", "ASSISTANT"]:
         raise_user_not_permitted()
 
@@ -247,11 +262,20 @@ def get_grade_data(lab_exercise_id: int, student_id: int, db: Session = Depends(
 def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db), curr_user=Depends(get_current_user)):
     user = db.query(User).filter(User.id == curr_user.id).first()
 
-    # TODO: unhash curr_user's password and check if its same with request.current_password
-    # TODO: check if request: new_password == request: confirm_new_password
-    # TODO: exceptions for both if incorrect
-    # TODO: hash new password if everything okay
-    # Save new hashed password
-    # user.password = hashed_password
-    # db.commit()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not verify_password(request.current_password, user.password):
+        raise HTTPException(status_code=400, detail="Incorrect current password")
+
+    if request.new_password != request.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+
+    if request.new_password == request.current_password:
+        raise HTTPException(status_code=400, detail="Current password is same")
+
+    user.password = hash_password(request.new_password)
+    db.commit()
+    db.refresh(user)
+
     return {"message": "Password changed successfully!"}
