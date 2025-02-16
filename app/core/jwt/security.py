@@ -9,7 +9,6 @@ from app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 from app.core.database import get_db
 from app.core.exceptions import raise_jwt_invalid_or_expired, raise_user_not_found
 from app.models.user import User
-from app.schemas.user_schema import UserResponse
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
