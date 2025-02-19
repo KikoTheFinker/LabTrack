@@ -11,5 +11,5 @@ class CourseAssignments(Base):
     time_details_id = Column(Integer, ForeignKey("time_details.id", ondelete="CASCADE"), nullable=False)
 
     student = relationship("User", backref="student_courses")
-    course = relationship("Course", backref="student_courses")
+    course = relationship("Course", back_populates="assignments")
     time_details = relationship("TimeDetails", backref="student_courses")

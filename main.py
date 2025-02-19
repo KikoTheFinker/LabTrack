@@ -4,14 +4,15 @@ import io
 import qrcode
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.core.exceptions import raise_invalid_credentials, raise_user_not_found, raise_course_not_found, \
     raise_user_not_permitted
 from app.core.jwt.security import verify_password, create_access_token, get_current_user, hash_password
-from app.models import Course, LaboratoryExercise, StudentPoints
+from app.models import Course, LaboratoryExercise, StudentPoints, TimeDetails
 from app.models.course_assignments import CourseAssignments
+from app.models.professor_courses import ProfessorCourses
 from app.models.user import User
 from app.schemas.change_password_schema import ChangePasswordRequest
 from app.schemas.course_schema import CourseResponse
@@ -79,12 +80,56 @@ def get_all_courses(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/courses/{course_id}")
-def get_course(course_id: int, db: Session = Depends(get_db)):
-    course = db.query(Course).filter(Course.id == course_id).first()
-    if not course:
-        raise_course_not_found()
-    return CourseResponse.model_validate(course)
+@app.get("/student/{course_id}")
+def get_course_current_user_exercises(course_id: int, db: Session = Depends(get_db),
+                                      curr_user=Depends(get_current_user)):
+    if curr_user.role not in ["STUDENT"]:
+        raise_user_not_permitted()
+
+    query = (
+        db.query(
+            CourseAssignments.id.label("assignment_id"),
+            LaboratoryExercise.id.label("exercise_id"),
+            LaboratoryExercise.name.label("exercise_name"),
+            LaboratoryExercise.date_time.label("exercise_date"),
+            LaboratoryExercise.max_points.label("exercise_max_points"),
+            TimeDetails.id.label("time_details_id"),
+            TimeDetails.group_name.label("time_details_group_name"),
+            TimeDetails.room.label("time_details_room"),
+            TimeDetails.time.label("time_details_time"),
+            StudentPoints.points.label("student_points")
+        )
+        .join(LaboratoryExercise, LaboratoryExercise.course_id == CourseAssignments.course_id)
+        .join(TimeDetails, TimeDetails.id == LaboratoryExercise.id)
+        .outerjoin(StudentPoints,
+                   (StudentPoints.lab_exercise_id == LaboratoryExercise.id) &
+                   (StudentPoints.student_id == curr_user.id))
+        .filter(CourseAssignments.student_id == curr_user.id)
+        .filter(CourseAssignments.course_id == course_id)
+    )
+
+    results = query.all()
+
+    response = {"assignments": []}
+
+    for assignment_id, exercise_id, exercise_name, exercise_date, exercise_max_points, \
+            time_details_id, time_details_group_name, time_details_room, time_details_time, student_points in results:
+        response["assignments"].append({
+            "assignment_id": assignment_id,
+            "exercise_id": exercise_id,
+            "exercise_name": exercise_name,
+            "exercise_date": exercise_date,
+            "exercise_max_points": exercise_max_points,
+            "student_points": student_points if student_points is not None else "Not Graded",
+            "time_details": {
+                "time_details_id": time_details_id,
+                "group_name": time_details_group_name,
+                "room": time_details_room,
+                "time": time_details_time,
+            }
+        })
+
+    return response
 
 
 @app.get("/courses/{course_id}/students")
@@ -136,29 +181,37 @@ def enroll_course(course_id: int, user_id: int, db: Session = Depends(get_db), c
     return {"message": "User enrolled successfully"}
 
 
-# @app.get("/courses/{course_id}/exercises}")
-# def get_course_exercises(course_id: int, db : Session = Depends()):
-
-
-@app.get("/course/{user_id}")
-def get_user_courses(user_id: int, db: Session = Depends(get_db), curr_user=Depends(get_current_user)):
-    if curr_user.role not in ["PROFESSOR", "ASSISTANT"] and curr_user.id != user_id:
-        raise_user_not_permitted()
-
+@app.get("/student/{course_id}")
+def get_course_exercises(course_id: int, db: Session = Depends(get_db), curr_user=Depends(get_current_user)):
     courses = (
         db.query(Course)
-        .join(CourseAssignments, Course.id == CourseAssignments.course_id)
-        .filter(CourseAssignments.student_id == user_id)
-        .distinct()
+        .join(CourseAssignments, CourseAssignments.course_id == Course.id)
+        .join(TimeDetails, TimeDetails.id == CourseAssignments.time_details_id)
+        .filter(CourseAssignments.student_id == curr_user.id)
+        .filter(Course.id == course_id)
+        .options(joinedload(Course.assignments))
         .all()
     )
+    return courses
 
-    return [
-        {
-            "course": course,
-        }
-        for course in courses
-    ]
+
+@app.get("/my-courses")
+def get_user_courses(db: Session = Depends(get_db), curr_user=Depends(get_current_user)):
+    if curr_user.role not in ["PROFESSOR", "ASSISTANT"]:
+        courses = (
+            db.query(Course)
+            .join(CourseAssignments, Course.id == CourseAssignments.course_id)
+            .filter(CourseAssignments.student_id == curr_user.id)
+            .all()
+        )
+    else:
+        courses = (
+            db.query(Course)
+            .join(ProfessorCourses, Course.id == ProfessorCourses.course_id)
+            .filter(ProfessorCourses.professor_id == curr_user.id)
+            .all()
+        )
+    return {"courses": [{"course": course} for course in courses]}
 
 
 @app.get("/student/{student_id}/courses-exercises")
