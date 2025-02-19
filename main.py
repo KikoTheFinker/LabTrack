@@ -4,13 +4,15 @@ import io
 import qrcode
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
 
 from app.core.database import get_db
 from app.core.exceptions import raise_invalid_credentials, raise_user_not_found, raise_course_not_found, \
     raise_user_not_permitted
 from app.core.jwt.security import verify_password, create_access_token, get_current_user, hash_password
-from app.models import Course, LaboratoryExercise, StudentPoints, TimeDetails
+from app.models import Course, LaboratoryExercise, StudentPoints
+from app.models import TimeDetails
 from app.models.course_assignments import CourseAssignments
 from app.models.professor_courses import ProfessorCourses
 from app.models.user import User
@@ -179,6 +181,16 @@ def enroll_course(course_id: int, user_id: int, db: Session = Depends(get_db), c
     db.commit()
     db.refresh(enrollment)
     return {"message": "User enrolled successfully"}
+
+
+# @app.get("/courses/{course_id}/exercises}")
+# def get_course_exercises(course_id: int, db : Session = Depends()):
+
+
+@app.get("/course/{user_id}")
+def get_user_courses(user_id: int, db: Session = Depends(get_db), curr_user=Depends(get_current_user)):
+    if curr_user.role not in ["PROFESSOR", "ASSISTANT"] and curr_user.id != user_id:
+        raise_user_not_permitted()
 
 
 @app.get("/student/{course_id}")
